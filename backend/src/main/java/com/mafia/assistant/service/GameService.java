@@ -22,6 +22,7 @@ import com.mafia.assistant.web.dto.GameLogResponse;
 import com.mafia.assistant.web.dto.GameResponse;
 import com.mafia.assistant.web.dto.GameResultResponse;
 import com.mafia.assistant.web.dto.GameSummaryResponse;
+import com.mafia.assistant.web.dto.MafiaVoteDto;
 import com.mafia.assistant.web.dto.NightResolutionRequest;
 import com.mafia.assistant.web.dto.PlayerActionRequest;
 import com.mafia.assistant.web.dto.PlayerResponse;
@@ -33,10 +34,12 @@ import com.mafia.assistant.web.error.BadRequestException;
 import com.mafia.assistant.web.error.NotFoundException;
 import jakarta.transaction.Transactional;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -108,8 +111,10 @@ public class GameService {
         if (request.citizenCount() != null) game.setCitizenCount(request.citizenCount());
         if (request.customRolesJson() != null) game.setCustomRolesJson(request.customRolesJson());
         if (request.paperRolesEnabled() != null) game.setPaperRolesEnabled(request.paperRolesEnabled());
-        int totalBaseRoles = game.getMafiaCount() + game.getDonCount() + game.getSheriffCount() + game.getCitizenCount();
-        if (totalBaseRoles > game.getTotalPlayers()) throw new BadRequestException("Base role count cannot exceed total players");
+        if (!game.isPaperRolesEnabled()) {
+            int totalBaseRoles = game.getMafiaCount() + game.getDonCount() + game.getSheriffCount() + game.getCitizenCount();
+            if (totalBaseRoles > game.getTotalPlayers()) throw new BadRequestException("Base role count cannot exceed total players");
+        }
         appendLog(game, EventType.ROLE_ASSIGNED, "Обновлены настройки ролей");
         return getGame(gameId);
     }
@@ -150,16 +155,21 @@ public class GameService {
     @Transactional
     public GameResponse togglePhase(Long gameId) {
         Game game = getActiveGame(gameId);
+        List<Player> players = playerRepository.findByGameIdOrderBySeatIndexAsc(gameId);
         saveSnapshotLog(game, EventType.PHASE_CHANGED, "Переключение фазы");
         if (game.getPhase() == PhaseType.NIGHT) {
             game.setPhase(PhaseType.DAY);
             game.setCurrentDayNumber(game.getCurrentDayNumber() + 1);
         } else {
             game.setPhase(PhaseType.NIGHT);
+            for (Player p : players) {
+                p.setSilenced(false);
+            }
+            playerRepository.saveAll(players);
         }
-        setNextAliveSpeaker(game, playerRepository.findByGameIdOrderBySeatIndexAsc(gameId));
+        setNextAliveSpeaker(game, players);
         appendLog(game, EventType.PHASE_CHANGED, "Фаза: " + game.getPhase());
-        checkWinner(game, playerRepository.findByGameIdOrderBySeatIndexAsc(gameId));
+        checkWinner(game, players);
         return getGame(gameId);
     }
 
@@ -224,6 +234,13 @@ public class GameService {
         List<Player> players = playerRepository.findByGameIdOrderBySeatIndexAsc(gameId);
         Player player = getPlayerBySeat(players, request.seatIndex());
         if (!player.isNominatedToday()) throw new BadRequestException("Игрок не выставлен на голосование");
+        long aliveCount = players.stream().filter(Player::isAlive).count();
+        int totalVotesCast = players.stream()
+                .mapToInt(p -> p.getVotesReceivedToday() == null ? 0 : p.getVotesReceivedToday())
+                .sum();
+        if (totalVotesCast + 1 > aliveCount) {
+            throw new BadRequestException("Лимит голосов: сумма голосов не может превышать число живых игроков.");
+        }
         saveSnapshotLog(game, EventType.VOTE_CAST, "Голос за игрока " + request.seatIndex());
         player.setVotesReceivedToday(player.getVotesReceivedToday() + 1);
         playerRepository.save(player);
@@ -248,27 +265,161 @@ public class GameService {
     @Transactional
     public GameResponse resolveNight(Long gameId, NightResolutionRequest request) {
         Game game = getActiveGame(gameId);
-        if (game.getPhase() != PhaseType.NIGHT) throw new BadRequestException("Night wizard доступен только в фазе NIGHT");
+        if (game.getPhase() != PhaseType.NIGHT) throw new BadRequestException("Мастер ночи доступен только в фазе NIGHT");
         List<Player> players = playerRepository.findByGameIdOrderBySeatIndexAsc(gameId);
         saveSnapshotLog(game, EventType.NIGHT_ACTION, "Результат ночи");
-        Integer target = request.mafiaTargetSeat();
+
         Integer doctorSave = request.doctorSaveSeat();
-        if (target != null) {
-            Player targetPlayer = getPlayerBySeat(players, target);
-            if (doctorSave != null && doctorSave.equals(target)) {
-                appendLogWithPayload(game, EventType.NIGHT_RESULT, "Утром никто не умер", mapToJson(Map.of("doctorSaveSeat", doctorSave, "mafiaTargetSeat", target)));
+        Integer mafiaVictim = resolveMafiaVictim(players, request);
+
+        Integer maniacVictim = request.maniacTargetSeat();
+
+        // Проверки
+        if (request.sheriffCheckSeat() != null) {
+            Player checked = getPlayerBySeat(players, request.sheriffCheckSeat());
+            appendLog(game, EventType.NIGHT_ACTION, "Шериф проверил место " + request.sheriffCheckSeat() + ": " + formatExactRole(checked));
+        }
+        if (request.donCheckSeat() != null) {
+            Player checked = getPlayerBySeat(players, request.donCheckSeat());
+            appendLog(game, EventType.NIGHT_ACTION, "Дон проверил место " + request.donCheckSeat() + ": " + formatExactRole(checked));
+        }
+        if (request.bomzhCheckSeat() != null) {
+            Player checked = getPlayerBySeat(players, request.bomzhCheckSeat());
+            appendLog(game, EventType.NIGHT_ACTION, "Бомж проверил место " + request.bomzhCheckSeat() + ": " + formatBomzhCoarse(checked));
+        }
+
+        if (request.putanaTargetSeat() != null) {
+            Player silenced = getPlayerBySeat(players, request.putanaTargetSeat());
+            silenced.setSilenced(true);
+            playerRepository.save(silenced);
+            appendLog(game, EventType.NIGHT_ACTION, "Путана: место " + request.putanaTargetSeat() + " молчит до конца дня");
+        }
+
+        Map<String, Object> nightPayload = new HashMap<>();
+        nightPayload.put("mafiaVictim", mafiaVictim);
+        nightPayload.put("maniacVictim", maniacVictim);
+        nightPayload.put("doctorSaveSeat", doctorSave);
+
+        if (mafiaVictim != null) {
+            Player targetPlayer = getPlayerBySeat(players, mafiaVictim);
+            if (doctorSave != null && doctorSave.equals(mafiaVictim)) {
+                appendLog(game, EventType.NIGHT_RESULT, "Мафия: место " + mafiaVictim + " спасено доктором");
             } else {
                 targetPlayer.setAlive(false);
                 targetPlayer.setEliminatedAt(Instant.now());
                 playerRepository.save(targetPlayer);
-                appendLogWithPayload(game, EventType.NIGHT_RESULT, "Ночью убит игрок " + target, mapToJson(Map.of("doctorSaveSeat", doctorSave, "mafiaTargetSeat", target)));
+                appendLog(game, EventType.NIGHT_RESULT, "Мафия убила игрока " + mafiaVictim);
             }
         }
+
+        players = playerRepository.findByGameIdOrderBySeatIndexAsc(gameId);
+        if (maniacVictim != null) {
+            Player targetPlayer = getPlayerBySeat(players, maniacVictim);
+            if (!targetPlayer.isAlive()) {
+                appendLog(game, EventType.NIGHT_RESULT, "Маньяк: цель уже мертва");
+            } else if (doctorSave != null && doctorSave.equals(maniacVictim)) {
+                appendLog(game, EventType.NIGHT_RESULT, "Маньяк: место " + maniacVictim + " спасено доктором");
+            } else {
+                targetPlayer.setAlive(false);
+                targetPlayer.setEliminatedAt(Instant.now());
+                playerRepository.save(targetPlayer);
+                appendLog(game, EventType.NIGHT_RESULT, "Маньяк убил игрока " + maniacVictim);
+            }
+        }
+
+        appendLogWithPayload(game, EventType.NIGHT_RESULT, "Утро", mapToJson(nightPayload));
+
         game.setPhase(PhaseType.DAY);
         game.setCurrentDayNumber(game.getCurrentDayNumber() + 1);
+        players = playerRepository.findByGameIdOrderBySeatIndexAsc(gameId);
         setNextAliveSpeaker(game, players);
         checkWinner(game, players);
         return getGame(gameId);
+    }
+
+    /**
+     * Жертва мафии: сначала явный лидер по числу голосов (уникальный максимум).
+     * При ничьей наверху — выбор Дона (donPreferredVictimSeat или голос дона в mafiaVotes).
+     * Без Дона при ничьей — ручной override (MAFIA_TIE).
+     */
+    private Integer resolveMafiaVictim(List<Player> players, NightResolutionRequest request) {
+        if (request.mafiaVictimOverrideSeat() != null) {
+            return request.mafiaVictimOverrideSeat();
+        }
+        List<MafiaVoteDto> mafiaVotes = request.mafiaVotes();
+        if (mafiaVotes == null || mafiaVotes.isEmpty()) {
+            return null;
+        }
+
+        Map<Integer, Long> votesByTarget = new HashMap<>();
+        for (MafiaVoteDto v : mafiaVotes) {
+            votesByTarget.merge(v.targetSeat(), 1L, Long::sum);
+        }
+        if (votesByTarget.isEmpty()) {
+            return null;
+        }
+
+        long maxVotes = Collections.max(votesByTarget.values());
+        List<Integer> topTargets = votesByTarget.entrySet().stream()
+                .filter(e -> e.getValue() == maxVotes)
+                .map(Map.Entry::getKey)
+                .toList();
+
+        if (topTargets.size() == 1) {
+            return topTargets.getFirst();
+        }
+
+        Optional<Player> don = players.stream()
+                .filter(p -> p.isAlive() && p.getRole() == PlayerRole.DON)
+                .findFirst();
+        if (don.isPresent()) {
+            if (request.donPreferredVictimSeat() != null) {
+                return request.donPreferredVictimSeat();
+            }
+            int donSeat = don.get().getSeatIndex();
+            for (MafiaVoteDto v : mafiaVotes) {
+                if (v.voterSeat().equals(donSeat)) {
+                    return v.targetSeat();
+                }
+            }
+            throw new BadRequestException("Ничья между мафиози: укажите жертву Дона (donPreferredVictimSeat или голос дона в mafiaVotes).");
+        }
+
+        throw new BadRequestException("MAFIA_TIE: Ничья между мафиози. Укажите жертву вручную (mafiaVictimOverrideSeat).");
+    }
+
+    private String formatExactRole(Player player) {
+        if (player.getRole() == null) {
+            return "?";
+        }
+        if (player.getRole() == PlayerRole.CUSTOM && player.getCustomRoleName() != null) {
+            return player.getCustomRoleName();
+        }
+        return roleLabel(player.getRole());
+    }
+
+    private String roleLabel(PlayerRole role) {
+        return switch (role) {
+            case CITIZEN -> "Мирный";
+            case MAFIA -> "Мафия";
+            case DON -> "Дон";
+            case SHERIFF -> "Шериф";
+            case DOCTOR -> "Доктор";
+            case ESCORT -> "Путана";
+            case MANIAC -> "Маньяк";
+            case CUSTOM -> "Особая роль";
+        };
+    }
+
+    /** Бомж видит только «Активная роль» или «Мирный». */
+    private String formatBomzhCoarse(Player player) {
+        if (player.getRole() == null) {
+            return "Мирный";
+        }
+        if (player.getRole() == PlayerRole.CITIZEN && (player.getCustomRoleName() == null || player.getCustomRoleName().isBlank())) {
+            return "Мирный";
+        }
+        return "Активная роль";
     }
 
     @Transactional
@@ -366,7 +517,8 @@ public class GameService {
                 "alive", player.isAlive(),
                 "eliminatedAt", player.getEliminatedAt() == null ? "" : player.getEliminatedAt().toString(),
                 "nominated", player.isNominatedToday(),
-                "votes", player.getVotesReceivedToday()
+                "votes", player.getVotesReceivedToday(),
+                "silenced", player.isSilenced()
         )).toList());
         return mapToJson(snapshot);
     }
@@ -391,6 +543,9 @@ public class GameService {
                 player.setEliminatedAt(eliminatedAt == null || eliminatedAt.isBlank() ? null : Instant.parse(eliminatedAt));
                 player.setNominatedToday(Boolean.TRUE.equals(item.get("nominated")));
                 player.setVotesReceivedToday((Integer) item.get("votes"));
+                if (item.containsKey("silenced")) {
+                    player.setSilenced(Boolean.TRUE.equals(item.get("silenced")));
+                }
             }
             playerRepository.saveAll(players);
         } catch (Exception e) {
@@ -450,9 +605,15 @@ public class GameService {
         long totalAlive = players.stream().filter(Player::isAlive).count();
 
         WinnerSide winner = null;
-        if (mafiaAlive == 0 && maniacAlive == 0) winner = WinnerSide.CIVILIANS;
-        else if (mafiaAlive >= civiliansAlive && mafiaAlive > 0) winner = WinnerSide.MAFIA;
-        else if (maniacAlive > 0 && totalAlive == 1) winner = WinnerSide.MANIAC;
+        if (maniacAlive == 1 && totalAlive == 2) {
+            winner = WinnerSide.MANIAC;
+        } else if (maniacAlive == 1 && totalAlive == 1) {
+            winner = WinnerSide.MANIAC;
+        } else if (mafiaAlive == 0 && maniacAlive == 0) {
+            winner = WinnerSide.CIVILIANS;
+        } else if (maniacAlive == 0 && mafiaAlive > 0 && mafiaAlive >= civiliansAlive) {
+            winner = WinnerSide.MAFIA;
+        }
 
         if (winner == null) return;
         game.setStatus(GameStatus.FINISHED);
@@ -468,7 +629,7 @@ public class GameService {
 
     private PlayerResponse mapPlayer(Player player) {
         return new PlayerResponse(player.getId(), player.getSeatIndex(), player.getName(), player.getRole(), player.getCustomRoleName(),
-                player.isAlive(), player.isNominatedToday(), player.getVotesReceivedToday(), player.getEliminatedAt());
+                player.isAlive(), player.isNominatedToday(), player.getVotesReceivedToday(), player.isSilenced(), player.getEliminatedAt());
     }
 
     private GameLogResponse mapLog(GameLog log) {

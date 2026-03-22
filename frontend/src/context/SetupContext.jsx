@@ -1,21 +1,22 @@
-import { createContext, useContext, useMemo, useState } from 'react'
-
-const defaultCustomRoles = [{ name: 'Доктор', count: 1 }]
+import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { computeRolesConfig } from '../utils/roles.js'
 
 const SetupContext = createContext(null)
 
+const initialPlayers = ['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4']
+
 export function SetupProvider({ children }) {
   const [gameId, setGameId] = useState(null)
-  const [players, setPlayers] = useState(['Игрок 1', 'Игрок 2', 'Игрок 3', 'Игрок 4'])
-  const [rolesConfig, setRolesConfig] = useState({
-    mafiaCount: 1,
-    donCount: 1,
-    sheriffCount: 1,
-    citizenCount: 1,
-    customRoles: defaultCustomRoles,
-    paperRolesEnabled: false,
-  })
+  const [players, setPlayers] = useState(initialPlayers)
+  const [rolesConfig, setRolesConfig] = useState(() => computeRolesConfig(initialPlayers.length))
   const [assignments, setAssignments] = useState({})
+
+  const resetSetup = useCallback(() => {
+    setGameId(null)
+    setAssignments({})
+    setPlayers(initialPlayers)
+    setRolesConfig(computeRolesConfig(initialPlayers.length))
+  }, [])
 
   const value = useMemo(
     () => ({
@@ -27,12 +28,9 @@ export function SetupProvider({ children }) {
       setRolesConfig,
       assignments,
       setAssignments,
-      resetSetup: () => {
-        setGameId(null)
-        setAssignments({})
-      },
+      resetSetup,
     }),
-    [assignments, gameId, players, rolesConfig],
+    [assignments, gameId, players, resetSetup, rolesConfig],
   )
 
   return <SetupContext.Provider value={value}>{children}</SetupContext.Provider>

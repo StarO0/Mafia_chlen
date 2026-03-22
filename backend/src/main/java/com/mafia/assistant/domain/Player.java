@@ -62,6 +62,9 @@ public class Player {
     @Column(name = "eliminated_at")
     private Instant eliminatedAt;
 
+    @Column(name = "is_silenced", nullable = false)
+    private boolean silenced;
+
     public Long getId() {
         return id;
     }
@@ -140,5 +143,13 @@ public class Player {
 
     public void setEliminatedAt(Instant eliminatedAt) {
         this.eliminatedAt = eliminatedAt;
+    }
+
+    public boolean isSilenced() {
+        return silenced;
+    }
+
+    public void setSilenced(boolean silenced) {
+        this.silenced = silenced;
     }
 }

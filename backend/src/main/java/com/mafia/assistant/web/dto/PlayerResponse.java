@@ -12,6 +12,7 @@ public record PlayerResponse(
         boolean alive,
         boolean nominatedToday,
         Integer votesReceivedToday,
+        boolean silenced,
         Instant eliminatedAt
 ) {
 }

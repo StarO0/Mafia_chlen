@@ -1,16 +1,21 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import PageShell from '../components/PageShell.jsx'
 import PrimaryButton from '../components/PrimaryButton.jsx'
 import { useSetup } from '../context/SetupContext.jsx'
 import { updateRoles } from '../services/api.js'
+import { computeRolesConfig, isRolesConfigValid } from '../utils/roles.js'
 
-const roleLabels = [
-  ['mafiaCount', 'Мафия'],
-  ['donCount', 'Дон'],
-  ['sheriffCount', 'Шериф'],
-  ['citizenCount', 'Мирные'],
+const OPTIONAL_ROLES = [
+  { key: 'maniac', label: 'Маньяк' },
+  { key: 'bomzh', label: 'Бомж' },
+  { key: 'suicidnik', label: 'Суицидник' },
+  { key: 'schastlivchik', label: 'Счастливчик' },
 ]
+
+const rowClass =
+  'flex items-center justify-between rounded-2xl border border-white/10 bg-black/35 p-4 shadow-md backdrop-blur-md'
 
 export default function SetupRolesPage() {
   const { gameId, rolesConfig, setRolesConfig, players } = useSetup()
@@ -18,58 +23,51 @@ export default function SetupRolesPage() {
   const [saving, setSaving] = useState(false)
   const navigate = useNavigate()
 
-  const updateCounter = (key, delta) => {
-    setRolesConfig((prev) => ({
-      ...prev,
-      [key]: Math.max(0, prev[key] + delta),
-    }))
+  const N = players.length
+  const physical = rolesConfig.paperRolesEnabled
+  const valid = physical || isRolesConfigValid(rolesConfig)
+
+  const setOptional = (key, enabled) => {
+    setRolesConfig((prev) =>
+      computeRolesConfig(N, {
+        ...prev.optionals,
+        [key]: enabled,
+      }),
+    )
   }
-
-  const addCustomRole = () => {
-    setRolesConfig((prev) => ({
-      ...prev,
-      customRoles: [...prev.customRoles, { name: 'Новая роль', count: 1 }],
-    }))
-  }
-
-  const updateCustomRole = (index, key, value) => {
-    setRolesConfig((prev) => {
-      const copy = [...prev.customRoles]
-      copy[index] = { ...copy[index], [key]: key === 'count' ? Math.max(0, Number(value) || 0) : value }
-      return { ...prev, customRoles: copy }
-    })
-  }
-
-  const totalRoles =
-    rolesConfig.mafiaCount +
-    rolesConfig.donCount +
-    rolesConfig.sheriffCount +
-    rolesConfig.citizenCount +
-    rolesConfig.customRoles.reduce((sum, role) => sum + role.count, 0)
-
-  const isValid = totalRoles === players.length
 
   const handleNext = async () => {
     if (!gameId) {
       setError('Сначала создайте игру на первом шаге')
       return
     }
-    if (!isValid) {
-      setError(`Сумма ролей должна быть равна числу игроков (${players.length})`)
+    if (!valid) {
+      setError('Слишком много особых ролей для этого числа игроков — отключите часть опций.')
       return
     }
 
     setSaving(true)
     setError('')
     try {
-      await updateRoles(gameId, {
-        mafiaCount: rolesConfig.mafiaCount,
-        donCount: rolesConfig.donCount,
-        sheriffCount: rolesConfig.sheriffCount,
-        citizenCount: rolesConfig.citizenCount,
-        customRolesJson: JSON.stringify(rolesConfig.customRoles),
-        paperRolesEnabled: rolesConfig.paperRolesEnabled,
-      })
+      if (physical) {
+        await updateRoles(gameId, {
+          mafiaCount: 0,
+          donCount: 0,
+          sheriffCount: 0,
+          citizenCount: N,
+          customRolesJson: '[]',
+          paperRolesEnabled: true,
+        })
+      } else {
+        await updateRoles(gameId, {
+          mafiaCount: rolesConfig.mafiaCount,
+          donCount: rolesConfig.donCount,
+          sheriffCount: rolesConfig.sheriffCount,
+          citizenCount: rolesConfig.citizenCount,
+          customRolesJson: JSON.stringify(rolesConfig.customRolesJsonPayload ?? []),
+          paperRolesEnabled: false,
+        })
+      }
       navigate('/setup/distribute')
     } catch (err) {
       setError(err.message)
@@ -79,66 +77,122 @@ export default function SetupRolesPage() {
   }
 
   return (
-    <PageShell title="Настройка ролей" subtitle="Шаг 2: распределение ролей и доп. правила">
-      <p className="text-sm text-gray-300">Игроков: {players.length}</p>
+    <PageShell title="Настройка ролей" subtitle="Шаг 2: расчёт ролей и доп. роли">
+      <p className="text-sm text-gray-300">
+        Игроков: <span className="font-semibold text-white">{N}</span>
+      </p>
 
-      <div className="space-y-3">
-        {roleLabels.map(([key, label]) => (
-          <div key={key} className="flex items-center justify-between rounded-xl border border-red-900/40 bg-black/50 p-3">
-            <span className="text-base">{label}</span>
-            <div className="flex items-center gap-2">
-              <button className="rounded-lg bg-red-900 px-3 py-2" onClick={() => updateCounter(key, -1)}>
-                -
-              </button>
-              <span className="min-w-8 text-center text-lg">{rolesConfig[key]}</span>
-              <button className="rounded-lg bg-red-700 px-3 py-2" onClick={() => updateCounter(key, 1)}>
-                +
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <section className="rounded-xl border border-red-900/40 bg-black/40 p-3">
-        <h3 className="mb-2 text-sm font-semibold text-red-300">Кастомные роли</h3>
-        <div className="space-y-2">
-          {rolesConfig.customRoles.map((role, index) => (
-            <div key={index} className="grid grid-cols-[1fr_80px] gap-2">
-              <input
-                className="rounded-lg border border-red-900/50 bg-black p-3"
-                value={role.name}
-                onChange={(e) => updateCustomRole(index, 'name', e.target.value)}
-              />
-              <input
-                className="rounded-lg border border-red-900/50 bg-black p-3"
-                type="number"
-                min={0}
-                value={role.count}
-                onChange={(e) => updateCustomRole(index, 'count', e.target.value)}
-              />
-            </div>
-          ))}
-        </div>
-        <button className="mt-3 rounded-lg bg-red-900/70 px-3 py-2 text-sm" onClick={addCustomRole}>
-          + Добавить роль
-        </button>
-      </section>
-
-      <label className="flex items-center gap-3 rounded-xl border border-red-900/40 bg-black/40 p-4">
+      <label className="flex cursor-pointer items-center gap-4 rounded-2xl border border-white/10 bg-black/35 p-4 backdrop-blur-md transition active:scale-[0.99]">
         <input
           type="checkbox"
+          className="h-5 w-5 accent-red-600"
           checked={rolesConfig.paperRolesEnabled}
           onChange={(e) => setRolesConfig((prev) => ({ ...prev, paperRolesEnabled: e.target.checked }))}
         />
-        <span>Используем бумажные карточки ролей</span>
+        <span className="text-sm font-medium">Использовать физические карточки</span>
       </label>
 
-      <p className={`text-sm ${isValid ? 'text-green-400' : 'text-amber-300'}`}>
-        Всего ролей: {totalRoles} / {players.length}
-      </p>
+      {physical ? (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="rounded-3xl border border-amber-500/30 bg-amber-950/20 p-4 text-sm text-amber-100 backdrop-blur-md"
+        >
+          <p className="font-semibold">Ручной режим</p>
+          <p className="mt-2 text-xs text-amber-200/90">
+            Автоматический расчёт мафии и лимиты отключены. На следующем шаге вы сами назначите каждую роль каждому игроку.
+            Случайная раздача при старте не используется.
+          </p>
+        </motion.div>
+      ) : (
+        <>
+          <section className={rowClass}>
+            <div>
+              <p className="font-medium text-white">Распределение (авто)</p>
+              <p className="mt-1 text-xs text-gray-400">
+                N≤5: 1 мафия без дона. N≥6: мафия всего = ⌊(N−3)/3⌋+1, один из них — дон. Доктор и путана — по 1.
+              </p>
+            </div>
+          </section>
+
+          <motion.ul className="space-y-2" layout>
+            <li className={rowClass}>
+              <span>Обычная мафия</span>
+              <span className="text-xl font-semibold text-red-400">{rolesConfig.mafiaCount}</span>
+            </li>
+            <li className={rowClass}>
+              <span>Дон мафии</span>
+              <span className="text-xl font-semibold text-red-400">{rolesConfig.donCount > 0 ? '1' : '—'}</span>
+            </li>
+            <li className={rowClass}>
+              <span>Шериф</span>
+              <span className="text-xl font-semibold text-red-400">{rolesConfig.sheriffCount}</span>
+            </li>
+            <li className={rowClass}>
+              <span>Доктор</span>
+              <span className="text-xl font-semibold text-red-400">1</span>
+            </li>
+            <li className={rowClass}>
+              <span>Путана</span>
+              <span className="text-xl font-semibold text-red-400">1</span>
+            </li>
+            <li className={rowClass}>
+              <span>Мирные</span>
+              <span className={`text-xl font-semibold ${valid ? 'text-emerald-400' : 'text-amber-400'}`}>
+                {rolesConfig.citizenCount}
+              </span>
+            </li>
+          </motion.ul>
+
+          <section className="rounded-3xl border border-white/10 bg-black/30 p-4 backdrop-blur-md">
+            <h3 className="text-sm font-semibold text-red-300">Дополнительные роли</h3>
+            <p className="mt-1 text-xs text-gray-500">Только из этого списка.</p>
+            <div className="mt-4 space-y-3">
+              {OPTIONAL_ROLES.map(({ key, label }) => (
+                <label
+                  key={key}
+                  className="flex cursor-pointer items-center justify-between rounded-2xl border border-white/10 bg-white/5 p-4 transition active:scale-[0.99]"
+                >
+                  <span className="font-medium">{label}</span>
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 accent-red-600"
+                    checked={!!rolesConfig.optionals[key]}
+                    onChange={(e) => setOptional(key, e.target.checked)}
+                  />
+                </label>
+              ))}
+            </div>
+          </section>
+
+          <AnimatePresence mode="wait">
+            {!valid ? (
+              <motion.p
+                key="invalid"
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="text-sm text-amber-300"
+              >
+                Не хватает слотов под мирных — отключите часть доп. ролей.
+              </motion.p>
+            ) : (
+              <motion.p
+                key="valid"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="text-sm text-emerald-400/90"
+              >
+                Состав согласован с числом игроков ({N}).
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </>
+      )}
+
       {error ? <p className="text-sm text-red-300">{error}</p> : null}
 
-      <PrimaryButton onClick={handleNext} disabled={saving}>
+      <PrimaryButton type="button" onClick={handleNext} disabled={saving || !valid}>
         {saving ? 'Сохраняем...' : 'Далее'}
       </PrimaryButton>
     </PageShell>
