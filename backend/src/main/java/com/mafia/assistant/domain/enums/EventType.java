@@ -1,0 +1,19 @@
+package com.mafia.assistant.domain.enums;
+
+public enum EventType {
+    GAME_CREATED,
+    GAME_STARTED,
+    PHASE_CHANGED,
+    ROLE_ASSIGNED,
+    NIGHT_ACTION,
+    NIGHT_RESULT,
+    PLAYER_ELIMINATED,
+    PLAYER_RESTORED,
+    VOTE_STARTED,
+    VOTE_CAST,
+    VOTE_RESULT,
+    WARNING_CONFIRMED,
+    UNDO_APPLIED,
+    GAME_FINISHED,
+    NOTE
+}

@@ -1,0 +1,21 @@
+spring:
+  application:
+    name: mafia-game-master-assistant
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/mafia_assistant}
+    username: ${DB_USERNAME:postgres}
+    password: 74123
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+server:
+  port: ${SERVER_PORT:8080}
