@@ -43,9 +43,9 @@ export default function DayPhase({
         </button>
       </div>
 
-      <PrimaryButton onClick={onNextSpeaker}>{t.game.nextSpeaker}</PrimaryButton>
+      <PrimaryButton onClick={onNextSpeaker}>{t.game.nextPlayer}</PrimaryButton>
       <PrimaryButton className="bg-zinc-800 hover:bg-zinc-700" onClick={onNextPhase}>
-        {t.common.next}
+        {t.game.finishDiscussion}
       </PrimaryButton>
     </section>
   )

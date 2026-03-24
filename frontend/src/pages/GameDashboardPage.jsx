@@ -25,6 +25,7 @@ export default function GameDashboardPage() {
   const [timerRunning, setTimerRunning] = useState(false)
   const [mafiaVoteByVoter, setMafiaVoteByVoter] = useState({})
   const [phaseLoading, setPhaseLoading] = useState(false)
+  const [isLogOpen, setIsLogOpen] = useState(false)
 
   const alivePlayers = useMemo(() => (game?.players ?? []).filter((player) => player.alive), [game])
   const deadPlayers = useMemo(() => (game?.players ?? []).filter((player) => !player.alive), [game])
@@ -75,6 +76,9 @@ export default function GameDashboardPage() {
       const updated = await action()
       setGame(updated)
       setError('')
+      if (updated?.status === 'FINISHED') {
+        navigate(`/game/${updated.id}/result`)
+      }
       return true
     } catch (err) {
       setError(err.message)
@@ -91,18 +95,36 @@ export default function GameDashboardPage() {
   }
 
   const handleSubmitNight = async () => {
-    const mafiaVotes = mafiaTeamAlive
-      .map((m) => {
-        const target = mafiaVoteByVoter[m.seatIndex]
-        return target ? { voterSeat: m.seatIndex, targetSeat: Number(target) } : null
-      })
-      .filter(Boolean)
-    if (mafiaVotes.length === 0) {
-      setError(t.game.errors.needMafiaVictim)
-      return
-    }
-    const ok = await runAction(() =>
-      resolveNight(gameId, {
+    setPhaseLoading(true)
+    setError('')
+    try {
+      const latest = await getGame(gameId)
+      setGame(latest)
+      if (latest?.status === 'FINISHED') {
+        setError(t.game.errors.gameFinished)
+        navigate(`/game/${latest.id}/result`)
+        return
+      }
+      if (latest?.phase !== 'NIGHT') {
+        setStep('day')
+        setError(t.game.errors.nightPhaseOnly)
+        return
+      }
+
+      const latestAlive = (latest?.players ?? []).filter((player) => player.alive)
+      const latestMafia = latestAlive.filter((player) => player.role === 'MAFIA' || player.role === 'DON')
+      const mafiaVotes = latestMafia
+        .map((m) => {
+          const target = mafiaVoteByVoter[m.seatIndex]
+          return target ? { voterSeat: m.seatIndex, targetSeat: Number(target) } : null
+        })
+        .filter(Boolean)
+      if (mafiaVotes.length === 0) {
+        setError(t.game.errors.needMafiaVictim)
+        return
+      }
+
+      const updated = await resolveNight(gameId, {
         mafiaVotes,
         donPreferredVictimSeat: null,
         doctorSaveSeat: null,
@@ -112,11 +134,33 @@ export default function GameDashboardPage() {
         putanaTargetSeat: null,
         maniacTargetSeat: null,
         mafiaVictimOverrideSeat: null,
-      }),
-    )
-    if (ok) {
-      setStep('morning')
+      })
+      setGame(updated)
       setMafiaVoteByVoter({})
+      setStep('day')
+      setTimerRunning(false)
+      setTimerSeconds(SPEECH_SECONDS)
+      if (updated?.status === 'FINISHED') {
+        navigate(`/game/${updated.id}/result`)
+      }
+    } catch (err) {
+      const message = err?.message || ''
+      if (message.includes('Мастер ночи доступен только в фазе NIGHT')) {
+        const latest = await getGame(gameId).catch(() => null)
+        if (latest) {
+          setGame(latest)
+          if (latest.status === 'FINISHED') {
+            navigate(`/game/${latest.id}/result`)
+            return
+          }
+          setStep(latest.phase === 'NIGHT' ? 'night' : 'day')
+        }
+        setError(t.game.errors.nightPhaseOnly)
+      } else {
+        setError(message)
+      }
+    } finally {
+      setPhaseLoading(false)
     }
   }
 
@@ -159,7 +203,7 @@ export default function GameDashboardPage() {
               setTimerSeconds(SPEECH_SECONDS)
             }}
             onNextSpeaker={handleNextSpeaker}
-            onNextPhase={() => setStep('night')}
+            onNextPhase={() => setStep('morning')}
           />
         )
       case 'night':
@@ -188,7 +232,7 @@ export default function GameDashboardPage() {
             deadPlayers={deadPlayers}
             onRestore={(seatIndex) => seatIndex && runAction(() => restorePlayer(gameId, seatIndex))}
             onFinishVoting={() => {
-              setStep('day')
+              setStep('night')
               setTimerRunning(false)
               setTimerSeconds(SPEECH_SECONDS)
             }}
@@ -241,14 +285,23 @@ export default function GameDashboardPage() {
       )}
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-4">
-        <h3 className="text-lg font-semibold text-red-300">{t.game.logs}</h3>
-        <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
-          {[...(game?.logs ?? [])].reverse().map((log) => (
-            <p key={log.id} className="rounded-xl border border-white/10 bg-black/40 p-2 text-xs text-gray-300">
-              #{log.sequenceNo} · {log.message}
-            </p>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-left"
+          onClick={() => setIsLogOpen((v) => !v)}
+        >
+          <span className="text-lg font-semibold text-red-300">{t.game.logs}</span>
+          <span className="text-xs text-gray-300">{isLogOpen ? t.game.hideLogs : t.game.showLogs}</span>
+        </button>
+        {isLogOpen ? (
+          <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
+            {[...(game?.logs ?? [])].reverse().map((log) => (
+              <p key={log.id} className="rounded-xl border border-white/10 bg-black/40 p-2 text-xs text-gray-300">
+                #{log.sequenceNo} · {log.message}
+              </p>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       {error ? <p className="text-sm text-red-300">{error}</p> : null}

@@ -29,6 +29,8 @@ export const dictionaries = {
       defaultPlayer: 'Игрок',
       next: 'Далее',
       saving: 'Сохраняем...',
+      decrease: 'Уменьшить',
+      increase: 'Увеличить',
     },
     setupRoles: {
       title: 'Настройка ролей',
@@ -95,6 +97,8 @@ export const dictionaries = {
       speakingNow: 'Сейчас говорит',
       sec: 'сек',
       nextSpeaker: 'Далее',
+      nextPlayer: 'Следующий игрок',
+      finishDiscussion: 'Завершить обсуждение',
       night: 'Ночь: ход мафии',
       nightHint: 'Выберите жертву. Экран затемнен для ночной фазы.',
       chooseVictim: 'Выберите жертву',
@@ -107,6 +111,8 @@ export const dictionaries = {
       alivePlayers: 'Живые игроки',
       deadPlayers: 'Вне игры',
       logs: 'Журнал игры',
+      showLogs: 'Показать журнал',
+      hideLogs: 'Скрыть журнал',
       revive: 'Вернуть',
       remove: 'Убрать',
       nominate: 'Выставить',
@@ -116,6 +122,8 @@ export const dictionaries = {
       votesLimitReached: 'Лимит голосов достигнут',
       errors: {
         needMafiaVictim: 'Выберите жертву мафии',
+        nightPhaseOnly: 'Ночная фаза уже завершена. Синхронизировали состояние игры.',
+        gameFinished: 'Игра уже завершена.',
       },
     },
     result: {
@@ -167,6 +175,8 @@ export const dictionaries = {
       defaultPlayer: 'Player',
       next: 'Next',
       saving: 'Saving...',
+      decrease: 'Decrease',
+      increase: 'Increase',
     },
     setupRoles: {
       title: 'Roles setup',
@@ -233,6 +243,8 @@ export const dictionaries = {
       speakingNow: 'Now speaking',
       sec: 'sec',
       nextSpeaker: 'Next',
+      nextPlayer: 'Next player',
+      finishDiscussion: 'Finish discussion',
       night: 'Night: mafia action',
       nightHint: 'Pick victim. Screen is darkened for night phase.',
       chooseVictim: 'Select victim',
@@ -245,6 +257,8 @@ export const dictionaries = {
       alivePlayers: 'Alive players',
       deadPlayers: 'Eliminated',
       logs: 'Game log',
+      showLogs: 'Show log',
+      hideLogs: 'Hide log',
       revive: 'Restore',
       remove: 'Eliminate',
       nominate: 'Nominate',
@@ -254,6 +268,8 @@ export const dictionaries = {
       votesLimitReached: 'Vote limit reached',
       errors: {
         needMafiaVictim: 'Select a mafia victim',
+        nightPhaseOnly: 'Night phase is already over. Game state synchronized.',
+        gameFinished: 'Game is already finished.',
       },
     },
     result: {
