@@ -1,14 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import PageShell from '../components/PageShell.jsx'
 import PrimaryButton from '../components/PrimaryButton.jsx'
 import { useSetup } from '../context/SetupContext.jsx'
+import { useI18n } from '../context/I18nContext.jsx'
 import { createGame } from '../services/api.js'
 import { computeRolesConfig } from '../utils/roles.js'
 
-function buildDefaultNames(count) {
-  return Array.from({ length: count }, (_, index) => `Игрок ${index + 1}`)
+function buildDefaultNames(count, playerLabel) {
+  return Array.from({ length: count }, (_, index) => `${playerLabel} ${index + 1}`)
 }
 
 const inputClass =
@@ -17,6 +17,7 @@ const inputClass =
 export default function SetupPlayersPage() {
   const navigate = useNavigate()
   const { setGameId, players, setPlayers, setRolesConfig } = useSetup()
+  const { t } = useI18n()
   const [playerCount, setPlayerCount] = useState(players.length)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -24,15 +25,15 @@ export default function SetupPlayersPage() {
   const names = useMemo(() => {
     if (players.length === playerCount) return players
     if (players.length > playerCount) return players.slice(0, playerCount)
-    return [...players, ...buildDefaultNames(playerCount).slice(players.length)]
-  }, [playerCount, players])
+    return [...players, ...buildDefaultNames(playerCount, t.setupPlayers.defaultPlayer).slice(players.length)]
+  }, [playerCount, players, t.setupPlayers.defaultPlayer])
 
   const handleCountChange = (value) => {
     const next = Number(value)
     if (Number.isNaN(next)) return
     const clamped = Math.max(4, Math.min(20, next))
     setPlayerCount(clamped)
-    setPlayers(buildDefaultNames(clamped))
+    setPlayers(buildDefaultNames(clamped, t.setupPlayers.defaultPlayer))
     setRolesConfig((prev) => computeRolesConfig(clamped, prev.optionals))
   }
 
@@ -48,7 +49,7 @@ export default function SetupPlayersPage() {
     try {
       const payload = {
         playerCount,
-        playerNames: names.map((n, idx) => n.trim() || `Игрок ${idx + 1}`),
+        playerNames: names.map((n, idx) => n.trim() || `${t.setupPlayers.defaultPlayer} ${idx + 1}`),
       }
       const game = await createGame(payload)
       setGameId(game.id)
@@ -63,35 +64,22 @@ export default function SetupPlayersPage() {
   }
 
   return (
-    <PageShell title="Настройка игры" subtitle="Шаг 1: количество и имена игроков">
-      <label className="text-sm font-medium text-gray-300">Количество игроков</label>
-      <motion.input
-        whileFocus={{ scale: 1.01 }}
-        className={inputClass}
-        type="number"
-        min={4}
-        max={20}
-        value={playerCount}
-        onChange={(e) => handleCountChange(e.target.value)}
-      />
+    <PageShell title={t.setupPlayers.title} subtitle={t.setupPlayers.subtitle}>
+      <label className="text-sm font-medium text-gray-300">{t.setupPlayers.playerCount}</label>
+      <input className={inputClass} type="number" min={4} max={20} value={playerCount} onChange={(e) => handleCountChange(e.target.value)} />
 
       <div className="space-y-3">
         {names.map((name, index) => (
-          <motion.div
-            key={index}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.03 }}
-          >
+          <div key={index}>
             <input className={inputClass} value={name} onChange={(e) => updateName(index, e.target.value)} />
-          </motion.div>
+          </div>
         ))}
       </div>
 
       {error ? <p className="text-sm text-red-300">{error}</p> : null}
 
       <PrimaryButton type="button" disabled={submitting} onClick={handleNext}>
-        {submitting ? 'Сохраняем...' : 'Далее'}
+        {submitting ? t.setupPlayers.saving : t.setupPlayers.next}
       </PrimaryButton>
     </PageShell>
   )

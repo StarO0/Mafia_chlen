@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import PageShell from '../components/PageShell.jsx'
 import PrimaryButton from '../components/PrimaryButton.jsx'
 import { useSetup } from '../context/SetupContext.jsx'
+import { useI18n } from '../context/I18nContext.jsx'
 import { fetchGameHistory } from '../services/api.js'
 
 export default function MainMenuPage() {
@@ -12,10 +12,10 @@ export default function MainMenuPage() {
   const [error, setError] = useState('')
   const navigate = useNavigate()
   const { resetSetup } = useSetup()
+  const { t } = useI18n()
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     fetchGameHistory()
       .then((data) => {
         if (!cancelled) setHistory(data)
@@ -37,34 +37,31 @@ export default function MainMenuPage() {
   }, [navigate, resetSetup])
 
   return (
-    <PageShell title="Mafia Game Master" subtitle="Ассистент ведущего игры">
+    <PageShell title={t.menu.title} subtitle={t.menu.subtitle}>
       <PrimaryButton type="button" onClick={handleStartNewGame}>
-        Старт новой игры
+        {t.menu.startNew}
       </PrimaryButton>
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-4 shadow-inner backdrop-blur-md">
-        <h2 className="text-lg font-semibold text-red-300">История игр</h2>
-        {loading ? <p className="mt-3 text-sm text-gray-400">Загрузка...</p> : null}
+        <h2 className="text-lg font-semibold text-red-300">{t.menu.history}</h2>
+        {loading ? <p className="mt-3 text-sm text-gray-400">{t.common.loading}</p> : null}
         {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
         {!loading && !error && history.length === 0 ? (
-          <p className="mt-3 text-sm text-gray-400">История пока пустая</p>
+          <p className="mt-3 text-sm text-gray-400">{t.menu.historyEmpty}</p>
         ) : null}
         <ul className="mt-3 space-y-2">
-          {history.map((game, index) => (
-            <motion.li
+          {history.map((game) => (
+            <li
               key={game.id}
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.04 }}
               className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-md backdrop-blur-sm"
             >
               <p className="text-sm font-medium">
-                Игра #{game.id} · {game.status}
+                {t.menu.game} #{game.id} · {game.status}
               </p>
               <p className="text-xs text-gray-400">
-                Игроков: {game.totalPlayers} · Фаза: {game.phase}
+                {t.menu.players}: {game.totalPlayers} · {t.menu.phase}: {game.phase}
               </p>
-            </motion.li>
+            </li>
           ))}
         </ul>
       </section>

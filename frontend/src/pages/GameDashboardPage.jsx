@@ -1,123 +1,56 @@
-import { useEffect, useMemo, useReducer, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
 import PageShell from '../components/PageShell.jsx'
 import PrimaryButton from '../components/PrimaryButton.jsx'
-import {
-  castVote,
-  eliminatePlayer,
-  getGame,
-  nextSpeaker,
-  nominatePlayer,
-  resetVotes,
-  resolveNight,
-  restorePlayer,
-  togglePhase,
-  undoAction,
-} from '../services/api.js'
+import { useI18n } from '../context/I18nContext.jsx'
+import { castVote, eliminatePlayer, getGame, nextSpeaker, nominatePlayer, resetVotes, resolveNight, restorePlayer } from '../services/api.js'
 
-const initialUi = {
-  game: null,
-  loading: true,
-  error: '',
-  timerSeconds: 60,
-  timerRunning: false,
-  warningMessage: '',
-  warningAction: null,
-  nightForm: {
-    doctorSaveSeat: '',
-    sheriffCheckSeat: '',
-    donCheckSeat: '',
-    bomzhCheckSeat: '',
-    putanaTargetSeat: '',
-    maniacTargetSeat: '',
-    donPreferredVictimSeat: '',
-  },
-}
+const SPEECH_SECONDS = 60
+const STEPS = ['setup', 'day', 'night', 'morning']
 
-function reducer(state, action) {
-  switch (action.type) {
-    case 'SET_GAME':
-      return { ...state, game: action.payload, loading: false, error: '' }
-    case 'SET_ERROR':
-      return { ...state, error: action.payload, loading: false }
-    case 'SET_LOADING':
-      return { ...state, loading: action.payload }
-    case 'TICK':
-      return { ...state, timerSeconds: Math.max(0, state.timerSeconds - 1) }
-    case 'RESET_TIMER':
-      return { ...state, timerSeconds: 60, timerRunning: false }
-    case 'TOGGLE_TIMER':
-      return { ...state, timerRunning: !state.timerRunning }
-    case 'SHOW_WARNING':
-      return { ...state, warningMessage: action.payload.message, warningAction: action.payload.action }
-    case 'CLEAR_WARNING':
-      return { ...state, warningMessage: '', warningAction: null }
-    case 'SET_NIGHT_FIELD':
-      return {
-        ...state,
-        nightForm: { ...state.nightForm, [action.payload.field]: action.payload.value },
-      }
-    default:
-      return state
-  }
-}
-
-function parseSeat(value) {
-  const number = Number(value)
-  return Number.isNaN(number) || number <= 0 ? null : number
-}
-
-/** Стабильный key для списков игроков (избегаем коллизий и «пропажи» карточек в React). */
 function playerRowKey(player) {
   if (player?.id != null) return `player-${player.id}`
   return `seat-${player.seatIndex ?? 'x'}`
 }
 
-const btnBase =
-  'rounded-2xl px-3 py-2 text-sm font-medium shadow-md transition active:scale-95 disabled:pointer-events-none disabled:opacity-40'
-
 export default function GameDashboardPage() {
   const { gameId } = useParams()
   const navigate = useNavigate()
-  const [state, dispatch] = useReducer(reducer, initialUi)
-  /** seat (voter) -> target seat string */
+  const { t } = useI18n()
+
+  const [game, setGame] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [step, setStep] = useState('setup')
+  const [speakerIndex, setSpeakerIndex] = useState(0)
+  const [timerSeconds, setTimerSeconds] = useState(SPEECH_SECONDS)
+  const [timerRunning, setTimerRunning] = useState(false)
   const [mafiaVoteByVoter, setMafiaVoteByVoter] = useState({})
-  const [mafiaTieModal, setMafiaTieModal] = useState(false)
-  const [tieOverrideSeat, setTieOverrideSeat] = useState('')
 
-  const isDay = state.game?.phase === 'DAY'
-  const isNight = state.game?.phase === 'NIGHT'
-
-  const alivePlayers = useMemo(
-    () => (state.game?.players ?? []).filter((player) => player.alive),
-    [state.game],
-  )
-  const deadPlayers = useMemo(
-    () => (state.game?.players ?? []).filter((player) => !player.alive),
-    [state.game],
-  )
-
+  const alivePlayers = useMemo(() => (game?.players ?? []).filter((player) => player.alive), [game])
+  const deadPlayers = useMemo(() => (game?.players ?? []).filter((player) => !player.alive), [game])
   const mafiaTeamAlive = useMemo(
-    () => alivePlayers.filter((p) => p.role === 'MAFIA' || p.role === 'DON'),
+    () => alivePlayers.filter((player) => player.role === 'MAFIA' || player.role === 'DON'),
     [alivePlayers],
   )
-  const donAlive = useMemo(() => alivePlayers.find((p) => p.role === 'DON'), [alivePlayers])
 
-  const aliveCount = alivePlayers.length
+  const currentSpeaker = alivePlayers[speakerIndex] ?? null
   const totalDayVotesCast = useMemo(
-    () => alivePlayers.reduce((sum, p) => sum + (Number(p.votesReceivedToday) || 0), 0),
+    () => alivePlayers.reduce((sum, player) => sum + (Number(player.votesReceivedToday) || 0), 0),
     [alivePlayers],
   )
-  const dayVoteLimitReached = aliveCount > 0 && totalDayVotesCast >= aliveCount
+  const dayVoteLimitReached = alivePlayers.length > 0 && totalDayVotesCast >= alivePlayers.length
 
   const loadGame = async () => {
-    dispatch({ type: 'SET_LOADING', payload: true })
+    setLoading(true)
     try {
-      const game = await getGame(gameId)
-      dispatch({ type: 'SET_GAME', payload: game })
+      const data = await getGame(gameId)
+      setGame(data)
+      setError('')
     } catch (err) {
-      dispatch({ type: 'SET_ERROR', payload: err.message })
+      setError(err.message)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -127,545 +60,293 @@ export default function GameDashboardPage() {
   }, [gameId])
 
   useEffect(() => {
-    if (!state.timerRunning) return
-    const timer = setInterval(() => dispatch({ type: 'TICK' }), 1000)
+    if (game?.status === 'FINISHED') navigate(`/game/${game.id}/result`)
+  }, [game, navigate])
+
+  useEffect(() => {
+    if (!timerRunning) return undefined
+    const timer = setInterval(() => {
+      setTimerSeconds((prev) => Math.max(0, prev - 1))
+    }, 1000)
     return () => clearInterval(timer)
-  }, [state.timerRunning])
+  }, [timerRunning])
 
-  useEffect(() => {
-    if (state.game?.status === 'FINISHED') {
-      navigate(`/game/${state.game.id}/result`)
-    }
-  }, [navigate, state.game])
-
-  /** Голос Дона в селекте → поле жертвы Дона (приоритет при ничьей). */
-  useEffect(() => {
-    if (!donAlive) return
-    const v = mafiaVoteByVoter[donAlive.seatIndex]
-    if (v !== undefined && v !== '') {
-      dispatch({
-        type: 'SET_NIGHT_FIELD',
-        payload: { field: 'donPreferredVictimSeat', value: String(v) },
-      })
-    }
-  }, [donAlive, mafiaVoteByVoter])
-
-  const runAction = async (apiAction, warningAction = null) => {
+  const runAction = async (action) => {
     try {
-      const game = await apiAction()
-      dispatch({ type: 'SET_GAME', payload: game })
-      dispatch({ type: 'CLEAR_WARNING' })
-      if (game.status === 'FINISHED') navigate(`/game/${game.id}/result`)
+      const updated = await action()
+      setGame(updated)
+      setError('')
       return true
     } catch (err) {
-      const msg = err.message || ''
-      if (msg.startsWith('WARNING:') && warningAction) {
-        dispatch({
-          type: 'SHOW_WARNING',
-          payload: { message: msg.replace('WARNING:', '').trim(), action: warningAction },
-        })
-        return false
-      }
-      if (msg.startsWith('MAFIA_TIE')) {
-        setMafiaTieModal(true)
-        return false
-      }
-      dispatch({ type: 'SET_ERROR', payload: msg })
+      setError(err.message)
       return false
     }
   }
 
-  const buildNightPayload = (mafiaVictimOverrideSeat = null) => {
+  const handleNextSpeaker = async () => {
+    const ok = await runAction(() => nextSpeaker(gameId))
+    if (!ok) return
+    setTimerRunning(false)
+    setTimerSeconds(SPEECH_SECONDS)
+    setSpeakerIndex((prev) => (alivePlayers.length > 0 ? (prev + 1) % alivePlayers.length : 0))
+  }
+
+  const handleSubmitNight = async () => {
     const mafiaVotes = mafiaTeamAlive
-      .map((p) => {
-        const t = mafiaVoteByVoter[p.seatIndex]
-        if (t === undefined || t === '' || t === null) return null
-        return { voterSeat: p.seatIndex, targetSeat: Number(t) }
+      .map((m) => {
+        const target = mafiaVoteByVoter[m.seatIndex]
+        return target ? { voterSeat: m.seatIndex, targetSeat: Number(target) } : null
       })
       .filter(Boolean)
-    return {
-      mafiaVotes,
-      donPreferredVictimSeat: parseSeat(state.nightForm.donPreferredVictimSeat),
-      doctorSaveSeat: parseSeat(state.nightForm.doctorSaveSeat),
-      sheriffCheckSeat: parseSeat(state.nightForm.sheriffCheckSeat),
-      donCheckSeat: parseSeat(state.nightForm.donCheckSeat),
-      bomzhCheckSeat: parseSeat(state.nightForm.bomzhCheckSeat),
-      putanaTargetSeat: parseSeat(state.nightForm.putanaTargetSeat),
-      maniacTargetSeat: parseSeat(state.nightForm.maniacTargetSeat),
-      mafiaVictimOverrideSeat: mafiaVictimOverrideSeat == null ? null : mafiaVictimOverrideSeat,
+    if (mafiaVotes.length === 0) {
+      setError(t.game.errors.needMafiaVictim)
+      return
     }
-  }
-
-  const submitNight = async (mafiaVictimOverrideSeat = null) => {
-    const payload = buildNightPayload(mafiaVictimOverrideSeat)
-    const ok = await runAction(() => resolveNight(gameId, payload))
+    const ok = await runAction(() =>
+      resolveNight(gameId, {
+        mafiaVotes,
+        donPreferredVictimSeat: null,
+        doctorSaveSeat: null,
+        sheriffCheckSeat: null,
+        donCheckSeat: null,
+        bomzhCheckSeat: null,
+        putanaTargetSeat: null,
+        maniacTargetSeat: null,
+        mafiaVictimOverrideSeat: null,
+      }),
+    )
     if (ok) {
-      setMafiaTieModal(false)
-      setTieOverrideSeat('')
+      setStep('morning')
+      setMafiaVoteByVoter({})
     }
   }
 
-  const setNightSeat = (field, seat) => {
-    dispatch({ type: 'SET_NIGHT_FIELD', payload: { field, value: String(seat) } })
+  const nextStep = () => {
+    const index = STEPS.indexOf(step)
+    setStep(STEPS[Math.min(index + 1, STEPS.length - 1)])
   }
 
-  if (state.loading) {
+  if (loading) {
     return (
-      <PageShell title="Игра" subtitle="Загрузка..." phaseTint="neutral">
-        <p className="text-sm text-gray-300">Подождите...</p>
-      </PageShell>
-    )
-  }
-  if (!state.game) {
-    return (
-      <PageShell title="Игра" phaseTint="neutral">
-        <p className="text-sm text-red-300">{state.error || 'Игра не найдена'}</p>
+      <PageShell title={t.game.game} subtitle={t.common.loading}>
+        <p className="text-sm text-gray-300">{t.common.loading}</p>
       </PageShell>
     )
   }
 
-  const phaseTint = isDay ? 'day' : 'night'
-  const phaseLabel = isDay ? 'День' : 'Ночь'
+  if (!game) {
+    return (
+      <PageShell title={t.game.game}>
+        <p className="text-sm text-red-300">{error || t.game.notFound}</p>
+      </PageShell>
+    )
+  }
+
+  const phaseTint = step === 'night' ? 'night' : step === 'day' ? 'day' : 'neutral'
 
   return (
-    <PageShell
-      title={`Игра #${state.game.id}`}
-      subtitle={
-        <span className="inline-flex items-center gap-2">
-          <span>Фаза: {phaseLabel}</span>
-          <span className="text-lg">{isDay ? '☀️' : '🌙'}</span>
-        </span>
-      }
-      phaseTint={phaseTint}
-    >
-      <div className="grid grid-cols-2 gap-3">
-        <PrimaryButton type="button" className="p-3" onClick={() => runAction(() => togglePhase(gameId))}>
-          Сменить фазу
-        </PrimaryButton>
-        <PrimaryButton
-          type="button"
-          className="bg-zinc-800/90 p-3 ring-white/10 hover:bg-zinc-700"
-          onClick={() => runAction(() => undoAction(gameId))}
-        >
-          Отменить (Undo)
-        </PrimaryButton>
+    <PageShell title={`${t.game.game} #${game.id}`} subtitle={t.game[step === 'day' ? 'dayDiscussion' : step]} phaseTint={phaseTint}>
+      <div className="grid grid-cols-4 gap-2">
+        {STEPS.map((item) => (
+          <div
+            key={item}
+            className={`h-1.5 rounded-full ${STEPS.indexOf(item) <= STEPS.indexOf(step) ? 'bg-red-500' : 'bg-white/20'}`}
+          />
+        ))}
       </div>
 
-      <AnimatePresence>
-        {isDay ? (
-          <motion.section
-            key="day-block"
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.25 }}
-            className="overflow-hidden rounded-3xl border border-white/10 bg-black/30 p-4 backdrop-blur-md"
-          >
-            <h3 className="text-lg font-semibold text-amber-200">Очередь выступлений</h3>
-            <p className="mt-2 text-sm text-gray-300">Сейчас говорит: место {state.game.speakerSeatIndex ?? '—'}</p>
-            <p className="mt-2 text-3xl font-bold text-red-400 tabular-nums">{state.timerSeconds}s</p>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.95 }}
-                className={`${btnBase} bg-red-900/80 text-white`}
-                onClick={() => dispatch({ type: 'TOGGLE_TIMER' })}
-              >
-                {state.timerRunning ? 'Пауза' : 'Старт'}
-              </motion.button>
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.95 }}
-                className={`${btnBase} bg-zinc-800 text-white`}
-                onClick={() => dispatch({ type: 'RESET_TIMER' })}
-              >
-                Сброс
-              </motion.button>
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.95 }}
-                className={`${btnBase} bg-red-700 text-white`}
-                onClick={() => {
-                  dispatch({ type: 'RESET_TIMER' })
-                  runAction(() => nextSpeaker(gameId))
-                }}
-              >
-                Следующий
-              </motion.button>
-            </div>
-          </motion.section>
-        ) : null}
-      </AnimatePresence>
-
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-4 backdrop-blur-md">
-        <h3 className="text-lg font-semibold text-red-300">Живые игроки</h3>
-        {isDay ? (
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-gray-300">
-            <span>
-              Голосов отдано: <strong className="text-white">{totalDayVotesCast}</strong> / {aliveCount} (живых)
-            </span>
-            {dayVoteLimitReached ? (
-              <span className="rounded-lg bg-amber-950/80 px-2 py-1 font-medium text-amber-200">
-                Лимит голосов достигнут
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-        <ul className="mt-3 space-y-3">
-          {alivePlayers.map((player) => (
-            <li
-              key={playerRowKey(player)}
-              className="rounded-2xl border border-white/10 bg-white/5 p-4 shadow-md backdrop-blur-sm"
-            >
-              <p className="text-sm font-semibold">
-                #{player.seatIndex} {player.name}{' '}
-                <span className="font-normal text-gray-400">({player.role || '—'})</span>
-                {isDay && player.silenced ? (
-                  <span className="ml-2 rounded-full bg-red-950/80 px-2 py-0.5 text-xs font-medium text-red-300">
-                    Молчит
-                  </span>
-                ) : null}
-              </p>
-
-              {isDay ? (
-                <motion.div className="mt-3 flex flex-wrap gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-red-700 text-white`}
-                    onClick={() =>
-                      runAction(
-                        () => eliminatePlayer(gameId, player.seatIndex),
-                        () => eliminatePlayer(gameId, player.seatIndex, true),
-                      )
-                    }
-                  >
-                    Убрать
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-red-900/80 text-white`}
-                    onClick={() => runAction(() => nominatePlayer(gameId, player.seatIndex))}
-                  >
-                    Выставить
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} border border-white/15 bg-zinc-800/80 text-white`}
-                    onClick={() => runAction(() => castVote(gameId, player.seatIndex))}
-                    disabled={!player.nominatedToday || dayVoteLimitReached}
-                  >
-                    + Голос
-                  </motion.button>
-                </motion.div>
-              ) : null}
-
-              {isNight ? (
-                <motion.div className="mt-3 flex flex-wrap gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                  {donAlive ? (
-                    <motion.button
-                      type="button"
-                      whileTap={{ scale: 0.95 }}
-                      className={`${btnBase} bg-red-900/80 text-white`}
-                      onClick={() => {
-                        const ds = donAlive.seatIndex
-                        setMafiaVoteByVoter((prev) => ({
-                          ...prev,
-                          [ds]: String(player.seatIndex),
-                        }))
-                        dispatch({
-                          type: 'SET_NIGHT_FIELD',
-                          payload: { field: 'donPreferredVictimSeat', value: String(player.seatIndex) },
-                        })
-                      }}
-                    >
-                      Жертва Дона
-                    </motion.button>
-                  ) : null}
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-emerald-900/80 text-white`}
-                    onClick={() => setNightSeat('doctorSaveSeat', player.seatIndex)}
-                  >
-                    Лечение
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-indigo-900/80 text-white`}
-                    onClick={() => setNightSeat('sheriffCheckSeat', player.seatIndex)}
-                  >
-                    Проверка шерифа
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-violet-900/80 text-white`}
-                    onClick={() => setNightSeat('donCheckSeat', player.seatIndex)}
-                  >
-                    Проверка дона
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-amber-900/80 text-white`}
-                    onClick={() => setNightSeat('bomzhCheckSeat', player.seatIndex)}
-                  >
-                    Проверка бомжа
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-pink-900/50 text-white`}
-                    onClick={() => setNightSeat('putanaTargetSeat', player.seatIndex)}
-                  >
-                    Путана
-                  </motion.button>
-                  <motion.button
-                    type="button"
-                    whileTap={{ scale: 0.95 }}
-                    className={`${btnBase} bg-zinc-700 text-white`}
-                    onClick={() => setNightSeat('maniacTargetSeat', player.seatIndex)}
-                  >
-                    Жертва маньяка
-                  </motion.button>
-                </motion.div>
-              ) : null}
-
-              {isDay ? (
-                <p className="mt-2 text-xs text-gray-400">
-                  Выставлен: {player.nominatedToday ? 'да' : 'нет'} · Голосов: {player.votesReceivedToday}
-                </p>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-
-        {isNight ? (
-          <div className="mt-4 space-y-3 rounded-2xl border border-white/10 bg-black/40 p-3">
-            <p className="text-xs font-medium text-gray-400">Голоса мафии (каждый мафиози выбирает жертву)</p>
-            {mafiaTeamAlive.map((m) => (
-              <label key={m.id} className="block text-xs text-gray-500">
-                <span className="mb-1 block">
-                  {m.role === 'DON' ? 'Дон' : 'Мафия'} #{m.seatIndex} {m.name}
-                </span>
-                <select
-                  className="w-full rounded-xl border border-white/15 bg-black/50 p-3 text-sm text-white"
-                  value={mafiaVoteByVoter[m.seatIndex] ?? ''}
-                  onChange={(e) =>
-                    setMafiaVoteByVoter((prev) => ({
-                      ...prev,
-                      [m.seatIndex]: e.target.value,
-                    }))
-                  }
-                >
-                  <option value="">— кого убить —</option>
-                  {alivePlayers.map((t) => (
-                    <option key={t.seatIndex} value={t.seatIndex}>
-                      Место {t.seatIndex}: {t.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ))}
-            {donAlive ? (
-              <p className="text-xs text-gray-500">
-                Сначала считается большинство голосов мафии; при ничьей лидеров выбор Дона решает (кнопка «Жертва Дона» или поле ниже).
-              </p>
-            ) : (
-              <p className="text-xs text-amber-200/90">
-                Дона нет: при ничьей мафии вы увидите запрос на ручное подтверждение жертвы.
-              </p>
-            )}
-          </div>
-        ) : null}
-
-        {isDay ? (
-          <motion.button
-            type="button"
-            whileTap={{ scale: 0.98 }}
-            className="mt-4 w-full rounded-2xl border border-white/15 bg-zinc-800/80 p-4 font-medium backdrop-blur-sm"
-            onClick={() => runAction(() => resetVotes(gameId))}
-          >
-            Сбросить голосование
-          </motion.button>
-        ) : null}
-      </section>
-
-      {deadPlayers.length > 0 ? (
-        <section className="rounded-3xl border border-white/5 bg-black/40 p-4 opacity-90 backdrop-blur-md">
-          <h3 className="text-sm font-semibold text-gray-500">Вне игры</h3>
-          <ul className="mt-2 space-y-3">
-            {deadPlayers.map((player) => (
-              <li
-                key={playerRowKey(player)}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/5 bg-black/30 p-3 text-sm text-gray-400"
-              >
-                <span>
-                  #{player.seatIndex} {player.name} ({player.role || '—'})
-                </span>
-                <motion.button
-                  type="button"
-                  whileTap={{ scale: 0.95 }}
-                  className={`${btnBase} bg-zinc-700 text-white`}
-                  onClick={() => runAction(() => restorePlayer(gameId, player.seatIndex))}
-                >
-                  Вернуть
-                </motion.button>
+      {step === 'setup' ? (
+        <section className="space-y-3 rounded-3xl border border-white/10 bg-black/30 p-4">
+          <p className="text-sm text-gray-300">{t.game.setupHint}</p>
+          <ul className="space-y-2">
+            {game.players.map((player) => (
+              <li key={playerRowKey(player)} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
+                #{player.seatIndex} {player.name} <span className="text-gray-400">({player.role || '—'})</span>
               </li>
             ))}
           </ul>
+          <PrimaryButton onClick={nextStep}>{t.game.startGame}</PrimaryButton>
         </section>
       ) : null}
 
-      <AnimatePresence>
-        {isNight ? (
-          <motion.section
-            key="night-wizard"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.25 }}
-            className="rounded-3xl border border-indigo-500/20 bg-indigo-950/20 p-4 backdrop-blur-md"
-          >
-            <h3 className="text-lg font-semibold text-indigo-200">Мастер ночи</h3>
-            <p className="mt-1 text-xs text-gray-400">
-              Выберите игроков кнопками на карточках или введите числа. Проверки бомжа/шерифа/дона пишутся в журнал.
-            </p>
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              {[
-                ['donPreferredVictimSeat', 'Жертва мафии (место) — дон'],
-                ['doctorSaveSeat', 'Спасение доктора'],
-                ['sheriffCheckSeat', 'Проверка шерифа'],
-                ['donCheckSeat', 'Проверка дона'],
-                ['bomzhCheckSeat', 'Проверка бомжа'],
-                ['putanaTargetSeat', 'Путана'],
-                ['maniacTargetSeat', 'Жертва маньяка'],
-              ].map(([field, ph]) => (
-                <input
-                  key={field}
-                  className="rounded-2xl border border-white/15 bg-black/40 p-3 text-sm text-white backdrop-blur-sm outline-none ring-indigo-500/30 focus:ring-2"
-                  placeholder={ph}
-                  value={state.nightForm[field]}
-                  onChange={(e) =>
-                    dispatch({ type: 'SET_NIGHT_FIELD', payload: { field, value: e.target.value } })
-                  }
-                />
+      {step === 'day' ? (
+        <section className="space-y-4 rounded-3xl border border-amber-500/20 bg-black/30 p-4">
+          <p className="text-sm text-gray-300">{t.game.dayHint}</p>
+          {currentSpeaker ? (
+            <div key={currentSpeaker.seatIndex} className="rounded-3xl border border-white/10 bg-white/5 p-5 text-center">
+              <p className="text-sm text-gray-400">{t.game.speakingNow}</p>
+              <p className="mt-1 text-2xl font-bold text-red-400">
+                #{currentSpeaker.seatIndex} {currentSpeaker.name}
+              </p>
+              <p className="mt-4 text-5xl font-extrabold tabular-nums text-amber-200">{timerSeconds}</p>
+              <p className="text-xs text-gray-400">{t.game.sec}</p>
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              className="rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
+              onClick={() => setTimerRunning((v) => !v)}
+            >
+              {timerRunning ? t.common.pause : t.common.start}
+            </button>
+            <button
+              type="button"
+              className="rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
+              onClick={() => {
+                setTimerRunning(false)
+                setTimerSeconds(SPEECH_SECONDS)
+              }}
+            >
+              {t.common.reset}
+            </button>
+          </div>
+
+          <PrimaryButton onClick={handleNextSpeaker}>{t.game.nextSpeaker}</PrimaryButton>
+          <PrimaryButton className="bg-zinc-800 hover:bg-zinc-700" onClick={() => setStep('night')}>
+            {t.common.next}
+          </PrimaryButton>
+        </section>
+      ) : null}
+
+      {step === 'night' ? (
+        <section className="space-y-4 rounded-3xl border border-indigo-500/30 bg-indigo-950/30 p-4">
+          <p className="text-sm text-indigo-200">{t.game.nightHint}</p>
+          {mafiaTeamAlive.map((mafia) => (
+            <label key={mafia.id ?? mafia.seatIndex} className="block rounded-2xl border border-white/10 bg-black/40 p-3">
+              <span className="mb-2 block text-xs text-gray-400">
+                {t.game.mafiaVote} #{mafia.seatIndex} {mafia.name}
+              </span>
+              <select
+                className="w-full rounded-xl border border-white/15 bg-black/60 p-3 text-sm text-white"
+                value={mafiaVoteByVoter[mafia.seatIndex] ?? ''}
+                onChange={(e) =>
+                  setMafiaVoteByVoter((prev) => ({
+                    ...prev,
+                    [mafia.seatIndex]: e.target.value,
+                  }))
+                }
+              >
+                <option value="">{t.game.chooseVictim}</option>
+                {alivePlayers.map((player) => (
+                  <option key={player.seatIndex} value={player.seatIndex}>
+                    #{player.seatIndex} {player.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
+
+          <PrimaryButton onClick={handleSubmitNight}>{t.game.continueToMorning}</PrimaryButton>
+        </section>
+      ) : null}
+
+      {step === 'morning' ? (
+        <section className="space-y-4 rounded-3xl border border-white/10 bg-black/30 p-4">
+          <div>
+            <h3 className="text-lg font-semibold text-red-300">{t.game.nightResult}</h3>
+            <div className="mt-2 rounded-2xl border border-white/10 bg-black/35 p-3 text-xs text-gray-300">
+              {[...game.logs].slice(-3).map((log) => (
+                <p key={log.id}>
+                  #{log.sequenceNo} · {log.message}
+                </p>
               ))}
             </div>
-            <PrimaryButton type="button" className="mt-4" onClick={() => submitNight(null)}>
-              Применить ночь (утро)
-            </PrimaryButton>
-          </motion.section>
-        ) : null}
-      </AnimatePresence>
+          </div>
 
-      <section className="rounded-3xl border border-white/10 bg-black/30 p-4 backdrop-blur-md">
-        <h3 className="text-lg font-semibold text-red-300">Журнал игры</h3>
+          <div className="rounded-2xl border border-white/10 bg-black/35 p-3 text-xs text-gray-300">
+            {t.game.votesCast}: <strong className="text-white">{totalDayVotesCast}</strong> / {alivePlayers.length}
+            {dayVoteLimitReached ? <span className="ml-2 text-amber-300">{t.game.votesLimitReached}</span> : null}
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="text-sm font-semibold text-gray-200">{t.game.voteOut}</h4>
+            {alivePlayers.map((player) => (
+              <div key={playerRowKey(player)} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                <p className="text-sm">
+                  #{player.seatIndex} {player.name}
+                </p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    className="rounded-xl bg-red-800 p-2 text-xs"
+                    onClick={() => runAction(() => eliminatePlayer(gameId, player.seatIndex))}
+                  >
+                    {t.game.remove}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl bg-zinc-700 p-2 text-xs"
+                    onClick={() => runAction(() => nominatePlayer(gameId, player.seatIndex))}
+                  >
+                    {t.game.nominate}
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-xl bg-zinc-700 p-2 text-xs disabled:opacity-40"
+                    disabled={!player.nominatedToday || dayVoteLimitReached}
+                    onClick={() => runAction(() => castVote(gameId, player.seatIndex))}
+                  >
+                    {t.game.addVote}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <button
+            type="button"
+            className="w-full rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
+            onClick={() => runAction(() => resetVotes(gameId))}
+          >
+            {t.game.resetVoting}
+          </button>
+
+          {deadPlayers.length > 0 ? (
+            <div className="space-y-2 rounded-2xl border border-white/10 bg-black/35 p-3">
+              <p className="text-sm font-semibold text-gray-300">{t.game.deadPlayers}</p>
+              {deadPlayers.map((player) => (
+                <div key={playerRowKey(player)} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 p-2 text-xs">
+                  <span>
+                    #{player.seatIndex} {player.name}
+                  </span>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-zinc-700 px-3 py-1"
+                    onClick={() => runAction(() => restorePlayer(gameId, player.seatIndex))}
+                  >
+                    {t.game.revive}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <PrimaryButton
+            onClick={() => {
+              setStep('day')
+              setTimerRunning(false)
+              setTimerSeconds(SPEECH_SECONDS)
+            }}
+          >
+            {t.game.finishVoting}
+          </PrimaryButton>
+        </section>
+      ) : null}
+
+      <section className="rounded-3xl border border-white/10 bg-black/30 p-4">
+        <h3 className="text-lg font-semibold text-red-300">{t.game.logs}</h3>
         <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
-          {[...state.game.logs].reverse().map((log) => (
-            <motion.p
-              key={log.id}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="rounded-xl border border-white/5 bg-black/40 p-2 text-xs text-gray-300"
-            >
+          {[...game.logs].reverse().map((log) => (
+            <p key={log.id} className="rounded-xl border border-white/10 bg-black/40 p-2 text-xs text-gray-300">
               #{log.sequenceNo} · {log.message}
-            </motion.p>
+            </p>
           ))}
         </div>
       </section>
 
-      {state.error ? <p className="text-sm text-red-300">{state.error}</p> : null}
-
-      <AnimatePresence>
-        {state.warningMessage ? (
-          <motion.div
-            key="warn"
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0 }}
-            className="rounded-3xl border border-amber-500/40 bg-amber-950/40 p-4 backdrop-blur-md"
-          >
-            <p className="text-sm text-amber-100">{state.warningMessage}</p>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.97 }}
-                className={`${btnBase} bg-zinc-800 text-white`}
-                onClick={() => dispatch({ type: 'CLEAR_WARNING' })}
-              >
-                Отмена
-              </motion.button>
-              <motion.button
-                type="button"
-                whileTap={{ scale: 0.97 }}
-                className={`${btnBase} bg-amber-700 text-white`}
-                onClick={() => runAction(state.warningAction)}
-              >
-                Подтвердить
-              </motion.button>
-            </div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {mafiaTieModal ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center"
-          >
-            <motion.div
-              initial={{ y: 40 }}
-              animate={{ y: 0 }}
-              className="w-full max-w-md rounded-3xl border border-amber-500/40 bg-zinc-950 p-5 shadow-2xl"
-            >
-              <p className="text-sm font-medium text-amber-100">Ничья между мафиози</p>
-              <p className="mt-2 text-xs text-gray-400">
-                Укажите итоговую жертву мафии и подтвердите.
-              </p>
-              <input
-                className="mt-4 w-full rounded-2xl border border-white/15 bg-black/50 p-3 text-white"
-                placeholder="Место жертвы"
-                value={tieOverrideSeat}
-                onChange={(e) => setTieOverrideSeat(e.target.value)}
-              />
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className={`${btnBase} bg-zinc-800 text-white`}
-                  onClick={() => setMafiaTieModal(false)}
-                >
-                  Отмена
-                </button>
-                <button
-                  type="button"
-                  className={`${btnBase} bg-amber-700 text-white`}
-                  onClick={() => {
-                    const seat = parseSeat(tieOverrideSeat)
-                    if (!seat) {
-                      dispatch({
-                        type: 'SET_ERROR',
-                        payload: 'Укажите номер места жертвы мафии',
-                      })
-                      return
-                    }
-                    submitNight(seat)
-                  }}
-                >
-                  Подтвердить
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+      {error ? <p className="text-sm text-red-300">{error}</p> : null}
     </PageShell>
   )
 }

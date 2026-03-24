@@ -2,24 +2,13 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PageShell from '../components/PageShell.jsx'
 import PrimaryButton from '../components/PrimaryButton.jsx'
+import { useI18n } from '../context/I18nContext.jsx'
 import { getGame, getGameResult } from '../services/api.js'
-
-function winnerLabel(winnerSide) {
-  switch (winnerSide) {
-    case 'CIVILIANS':
-      return 'Мирные'
-    case 'MAFIA':
-      return 'Мафия'
-    case 'MANIAC':
-      return 'Маньяк'
-    default:
-      return 'Ничья'
-  }
-}
 
 export default function GameResultPage() {
   const { gameId } = useParams()
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [result, setResult] = useState(null)
   const [logs, setLogs] = useState([])
   const [error, setError] = useState('')
@@ -35,7 +24,7 @@ export default function GameResultPage() {
   }, [gameId])
 
   const exportText = result
-    ? `${result.exportText}\n\nКлючевые события:\n${[...logs]
+    ? `${result.exportText}\n\n${t.result.keyEvents}:\n${[...logs]
         .slice(-8)
         .map((log) => `- ${log.message}`)
         .join('\n')}`
@@ -47,16 +36,16 @@ export default function GameResultPage() {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
     } catch {
-      setError('Не удалось скопировать текст')
+      setError(t.result.copyFailed)
     }
   }
 
   if (error) {
     return (
-      <PageShell title="Результат игры">
+      <PageShell title={t.result.title}>
         <p className="text-sm text-red-300">{error}</p>
         <PrimaryButton className="mt-3" onClick={() => navigate('/')}>
-          В главное меню
+          {t.common.backToMenu}
         </PrimaryButton>
       </PageShell>
     )
@@ -64,33 +53,38 @@ export default function GameResultPage() {
 
   if (!result) {
     return (
-      <PageShell title="Результат игры">
-        <p className="text-sm text-gray-300">Загрузка результата...</p>
+      <PageShell title={t.result.title}>
+        <p className="text-sm text-gray-300">{t.result.loading}</p>
       </PageShell>
     )
   }
 
   return (
-    <PageShell title={`Игра #${gameId} завершена`} subtitle={`Победа: ${winnerLabel(result.winnerSide)}`}>
+    <PageShell
+      title={`${t.menu.game} #${gameId} ${t.result.gameFinished}`}
+      subtitle={`${t.result.victory}: ${t.result.winners[result.winnerSide] ?? t.result.winners.DRAW}`}
+    >
       <section className="rounded-xl border border-red-900/40 bg-black/40 p-4">
         <p className="text-lg font-semibold text-red-400">{result.summary}</p>
-        <p className="mt-2 text-sm text-gray-300">Всего дней: {result.totalDays}</p>
+        <p className="mt-2 text-sm text-gray-300">
+          {t.result.totalDays}: {result.totalDays}
+        </p>
       </section>
 
       <section className="rounded-xl border border-red-900/40 bg-black/40 p-4">
-        <h3 className="text-lg font-semibold text-red-400">Экспорт результатов</h3>
+        <h3 className="text-lg font-semibold text-red-400">{t.result.exportTitle}</h3>
         <textarea
           className="mt-3 min-h-44 w-full rounded-xl border border-red-900/50 bg-zinc-950 p-3 text-sm text-gray-200"
           value={exportText}
           readOnly
         />
         <PrimaryButton className="mt-3" onClick={copyExport}>
-          {copied ? 'Скопировано' : 'Скопировать для мессенджера'}
+          {copied ? t.result.copied : t.result.copy}
         </PrimaryButton>
       </section>
 
       <PrimaryButton className="bg-zinc-800 hover:bg-zinc-700" onClick={() => navigate('/')}>
-        В главное меню
+        {t.common.backToMenu}
       </PrimaryButton>
     </PageShell>
   )

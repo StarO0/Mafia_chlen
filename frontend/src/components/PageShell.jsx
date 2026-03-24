@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import LanguageSwitcher from './LanguageSwitcher.jsx'
 
 export default function PageShell({ title, subtitle, children, phaseTint = 'neutral' }) {
   const tintClass =
@@ -9,19 +9,19 @@ export default function PageShell({ title, subtitle, children, phaseTint = 'neut
         : 'from-black via-zinc-950 to-zinc-950'
 
   return (
-    <main className={`min-h-screen bg-gradient-to-b ${tintClass} p-4 pb-8 text-gray-100 transition-colors duration-500`}>
-      <motion.section
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 28 }}
-        className="mx-auto flex w-full max-w-lg flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-5 shadow-2xl shadow-black/50 backdrop-blur-xl"
-      >
+    <main
+      className={`min-h-screen overflow-x-hidden bg-gradient-to-b ${tintClass} p-3 pb-8 text-gray-100 transition-colors duration-500 sm:p-4`}
+    >
+      <section className="mx-auto flex w-full max-w-lg flex-col gap-4 rounded-3xl border border-white/10 bg-white/5 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-5">
         <header className="border-b border-white/10 pb-4">
-          <h1 className="text-2xl font-bold tracking-tight text-red-400">{title}</h1>
+          <div className="mb-3 flex items-center justify-end">
+            <LanguageSwitcher />
+          </div>
+          <h1 className="text-xl font-bold tracking-tight text-red-400 sm:text-2xl">{title}</h1>
           {subtitle ? <p className="mt-2 text-sm leading-relaxed text-gray-400">{subtitle}</p> : null}
         </header>
         {children}
-      </motion.section>
+      </section>
     </main>
   )
 }
