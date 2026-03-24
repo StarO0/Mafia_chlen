@@ -1,17 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import PageShell from '../components/PageShell.jsx'
-import PrimaryButton from '../components/PrimaryButton.jsx'
+import SetupPhase from '../components/game-phases/SetupPhase.jsx'
+import DayPhase from '../components/game-phases/DayPhase.jsx'
+import NightPhase from '../components/game-phases/NightPhase.jsx'
+import MorningPhase from '../components/game-phases/MorningPhase.jsx'
 import { useI18n } from '../context/I18nContext.jsx'
 import { castVote, eliminatePlayer, getGame, nextSpeaker, nominatePlayer, resetVotes, resolveNight, restorePlayer } from '../services/api.js'
 
 const SPEECH_SECONDS = 60
 const STEPS = ['setup', 'day', 'night', 'morning']
-
-function playerRowKey(player) {
-  if (player?.id != null) return `player-${player.id}`
-  return `seat-${player.seatIndex ?? 'x'}`
-}
 
 export default function GameDashboardPage() {
   const { gameId } = useParams()
@@ -26,6 +24,7 @@ export default function GameDashboardPage() {
   const [timerSeconds, setTimerSeconds] = useState(SPEECH_SECONDS)
   const [timerRunning, setTimerRunning] = useState(false)
   const [mafiaVoteByVoter, setMafiaVoteByVoter] = useState({})
+  const [phaseLoading, setPhaseLoading] = useState(false)
 
   const alivePlayers = useMemo(() => (game?.players ?? []).filter((player) => player.alive), [game])
   const deadPlayers = useMemo(() => (game?.players ?? []).filter((player) => !player.alive), [game])
@@ -121,9 +120,87 @@ export default function GameDashboardPage() {
     }
   }
 
-  const nextStep = () => {
-    const index = STEPS.indexOf(step)
-    setStep(STEPS[Math.min(index + 1, STEPS.length - 1)])
+  const handleStartRoundFlow = async () => {
+    setPhaseLoading(true)
+    setError('')
+    try {
+      const freshGame = await getGame(gameId)
+      if (!freshGame?.id) throw new Error('Game data is unavailable')
+      setGame(freshGame)
+      setStep('day')
+    } catch (err) {
+      setError(err?.message || 'Failed to start game flow')
+    } finally {
+      setPhaseLoading(false)
+    }
+  }
+
+  const phaseSubtitleMap = {
+    setup: t.game.setup,
+    day: t.game.dayDiscussion,
+    night: t.game.night,
+    morning: t.game.morning,
+  }
+
+  const renderPhase = () => {
+    switch (step) {
+      case 'setup':
+        return <SetupPhase t={t} players={game?.players ?? []} onStart={handleStartRoundFlow} loading={phaseLoading} />
+      case 'day':
+        return (
+          <DayPhase
+            t={t}
+            currentSpeaker={currentSpeaker}
+            timerSeconds={timerSeconds}
+            timerRunning={timerRunning}
+            onToggleTimer={() => setTimerRunning((v) => !v)}
+            onResetTimer={() => {
+              setTimerRunning(false)
+              setTimerSeconds(SPEECH_SECONDS)
+            }}
+            onNextSpeaker={handleNextSpeaker}
+            onNextPhase={() => setStep('night')}
+          />
+        )
+      case 'night':
+        return (
+          <NightPhase
+            t={t}
+            mafiaTeamAlive={mafiaTeamAlive}
+            alivePlayers={alivePlayers}
+            mafiaVoteByVoter={mafiaVoteByVoter}
+            setMafiaVoteByVoter={setMafiaVoteByVoter}
+            onSubmit={handleSubmitNight}
+          />
+        )
+      case 'morning':
+        return (
+          <MorningPhase
+            t={t}
+            logs={game?.logs ?? []}
+            totalDayVotesCast={totalDayVotesCast}
+            alivePlayers={alivePlayers}
+            dayVoteLimitReached={dayVoteLimitReached}
+            onEliminate={(seatIndex) => seatIndex && runAction(() => eliminatePlayer(gameId, seatIndex))}
+            onNominate={(seatIndex) => seatIndex && runAction(() => nominatePlayer(gameId, seatIndex))}
+            onCastVote={(seatIndex) => seatIndex && runAction(() => castVote(gameId, seatIndex))}
+            onResetVotes={() => runAction(() => resetVotes(gameId))}
+            deadPlayers={deadPlayers}
+            onRestore={(seatIndex) => seatIndex && runAction(() => restorePlayer(gameId, seatIndex))}
+            onFinishVoting={() => {
+              setStep('day')
+              setTimerRunning(false)
+              setTimerSeconds(SPEECH_SECONDS)
+            }}
+          />
+        )
+      default:
+        return (
+          <section className="rounded-3xl border border-red-500/30 bg-red-950/20 p-4">
+            <p className="text-sm text-red-200">UI state error: unknown step "{step}"</p>
+          </section>
+        )
+    }
   }
 
   if (loading) {
@@ -145,7 +222,7 @@ export default function GameDashboardPage() {
   const phaseTint = step === 'night' ? 'night' : step === 'day' ? 'day' : 'neutral'
 
   return (
-    <PageShell title={`${t.game.game} #${game.id}`} subtitle={t.game[step === 'day' ? 'dayDiscussion' : step]} phaseTint={phaseTint}>
+    <PageShell title={`${t.game.game} #${game.id}`} subtitle={phaseSubtitleMap[step] ?? t.game.setup} phaseTint={phaseTint}>
       <div className="grid grid-cols-4 gap-2">
         {STEPS.map((item) => (
           <div
@@ -155,190 +232,18 @@ export default function GameDashboardPage() {
         ))}
       </div>
 
-      {step === 'setup' ? (
-        <section className="space-y-3 rounded-3xl border border-white/10 bg-black/30 p-4">
-          <p className="text-sm text-gray-300">{t.game.setupHint}</p>
-          <ul className="space-y-2">
-            {game.players.map((player) => (
-              <li key={playerRowKey(player)} className="rounded-2xl border border-white/10 bg-white/5 p-3 text-sm">
-                #{player.seatIndex} {player.name} <span className="text-gray-400">({player.role || '—'})</span>
-              </li>
-            ))}
-          </ul>
-          <PrimaryButton onClick={nextStep}>{t.game.startGame}</PrimaryButton>
+      {phaseLoading ? (
+        <section className="rounded-3xl border border-white/10 bg-black/30 p-4">
+          <p className="text-sm text-gray-300">{t.common.loading}</p>
         </section>
-      ) : null}
-
-      {step === 'day' ? (
-        <section className="space-y-4 rounded-3xl border border-amber-500/20 bg-black/30 p-4">
-          <p className="text-sm text-gray-300">{t.game.dayHint}</p>
-          {currentSpeaker ? (
-            <div key={currentSpeaker.seatIndex} className="rounded-3xl border border-white/10 bg-white/5 p-5 text-center">
-              <p className="text-sm text-gray-400">{t.game.speakingNow}</p>
-              <p className="mt-1 text-2xl font-bold text-red-400">
-                #{currentSpeaker.seatIndex} {currentSpeaker.name}
-              </p>
-              <p className="mt-4 text-5xl font-extrabold tabular-nums text-amber-200">{timerSeconds}</p>
-              <p className="text-xs text-gray-400">{t.game.sec}</p>
-            </div>
-          ) : null}
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              className="rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
-              onClick={() => setTimerRunning((v) => !v)}
-            >
-              {timerRunning ? t.common.pause : t.common.start}
-            </button>
-            <button
-              type="button"
-              className="rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
-              onClick={() => {
-                setTimerRunning(false)
-                setTimerSeconds(SPEECH_SECONDS)
-              }}
-            >
-              {t.common.reset}
-            </button>
-          </div>
-
-          <PrimaryButton onClick={handleNextSpeaker}>{t.game.nextSpeaker}</PrimaryButton>
-          <PrimaryButton className="bg-zinc-800 hover:bg-zinc-700" onClick={() => setStep('night')}>
-            {t.common.next}
-          </PrimaryButton>
-        </section>
-      ) : null}
-
-      {step === 'night' ? (
-        <section className="space-y-4 rounded-3xl border border-indigo-500/30 bg-indigo-950/30 p-4">
-          <p className="text-sm text-indigo-200">{t.game.nightHint}</p>
-          {mafiaTeamAlive.map((mafia) => (
-            <label key={mafia.id ?? mafia.seatIndex} className="block rounded-2xl border border-white/10 bg-black/40 p-3">
-              <span className="mb-2 block text-xs text-gray-400">
-                {t.game.mafiaVote} #{mafia.seatIndex} {mafia.name}
-              </span>
-              <select
-                className="w-full rounded-xl border border-white/15 bg-black/60 p-3 text-sm text-white"
-                value={mafiaVoteByVoter[mafia.seatIndex] ?? ''}
-                onChange={(e) =>
-                  setMafiaVoteByVoter((prev) => ({
-                    ...prev,
-                    [mafia.seatIndex]: e.target.value,
-                  }))
-                }
-              >
-                <option value="">{t.game.chooseVictim}</option>
-                {alivePlayers.map((player) => (
-                  <option key={player.seatIndex} value={player.seatIndex}>
-                    #{player.seatIndex} {player.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ))}
-
-          <PrimaryButton onClick={handleSubmitNight}>{t.game.continueToMorning}</PrimaryButton>
-        </section>
-      ) : null}
-
-      {step === 'morning' ? (
-        <section className="space-y-4 rounded-3xl border border-white/10 bg-black/30 p-4">
-          <div>
-            <h3 className="text-lg font-semibold text-red-300">{t.game.nightResult}</h3>
-            <div className="mt-2 rounded-2xl border border-white/10 bg-black/35 p-3 text-xs text-gray-300">
-              {[...game.logs].slice(-3).map((log) => (
-                <p key={log.id}>
-                  #{log.sequenceNo} · {log.message}
-                </p>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-white/10 bg-black/35 p-3 text-xs text-gray-300">
-            {t.game.votesCast}: <strong className="text-white">{totalDayVotesCast}</strong> / {alivePlayers.length}
-            {dayVoteLimitReached ? <span className="ml-2 text-amber-300">{t.game.votesLimitReached}</span> : null}
-          </div>
-
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-gray-200">{t.game.voteOut}</h4>
-            {alivePlayers.map((player) => (
-              <div key={playerRowKey(player)} className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                <p className="text-sm">
-                  #{player.seatIndex} {player.name}
-                </p>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    className="rounded-xl bg-red-800 p-2 text-xs"
-                    onClick={() => runAction(() => eliminatePlayer(gameId, player.seatIndex))}
-                  >
-                    {t.game.remove}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl bg-zinc-700 p-2 text-xs"
-                    onClick={() => runAction(() => nominatePlayer(gameId, player.seatIndex))}
-                  >
-                    {t.game.nominate}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-xl bg-zinc-700 p-2 text-xs disabled:opacity-40"
-                    disabled={!player.nominatedToday || dayVoteLimitReached}
-                    onClick={() => runAction(() => castVote(gameId, player.seatIndex))}
-                  >
-                    {t.game.addVote}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <button
-            type="button"
-            className="w-full rounded-2xl border border-white/15 bg-zinc-800 p-4 text-sm font-semibold"
-            onClick={() => runAction(() => resetVotes(gameId))}
-          >
-            {t.game.resetVoting}
-          </button>
-
-          {deadPlayers.length > 0 ? (
-            <div className="space-y-2 rounded-2xl border border-white/10 bg-black/35 p-3">
-              <p className="text-sm font-semibold text-gray-300">{t.game.deadPlayers}</p>
-              {deadPlayers.map((player) => (
-                <div key={playerRowKey(player)} className="flex items-center justify-between gap-2 rounded-xl bg-white/5 p-2 text-xs">
-                  <span>
-                    #{player.seatIndex} {player.name}
-                  </span>
-                  <button
-                    type="button"
-                    className="rounded-lg bg-zinc-700 px-3 py-1"
-                    onClick={() => runAction(() => restorePlayer(gameId, player.seatIndex))}
-                  >
-                    {t.game.revive}
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          <PrimaryButton
-            onClick={() => {
-              setStep('day')
-              setTimerRunning(false)
-              setTimerSeconds(SPEECH_SECONDS)
-            }}
-          >
-            {t.game.finishVoting}
-          </PrimaryButton>
-        </section>
-      ) : null}
+      ) : (
+        renderPhase()
+      )}
 
       <section className="rounded-3xl border border-white/10 bg-black/30 p-4">
         <h3 className="text-lg font-semibold text-red-300">{t.game.logs}</h3>
         <div className="mt-3 max-h-52 space-y-2 overflow-y-auto">
-          {[...game.logs].reverse().map((log) => (
+          {[...(game?.logs ?? [])].reverse().map((log) => (
             <p key={log.id} className="rounded-xl border border-white/10 bg-black/40 p-2 text-xs text-gray-300">
               #{log.sequenceNo} · {log.message}
             </p>
