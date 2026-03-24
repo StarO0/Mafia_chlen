@@ -164,24 +164,19 @@ export default function SetupRolesPage() {
 
           <AnimatePresence mode="wait">
             {!valid ? (
-              <motion.p
+              <p
                 key="invalid"
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
                 className="text-sm text-amber-300"
               >
                 {t.setupRoles.invalidRoles}
-              </motion.p>
+              </p>
             ) : (
-              <motion.p
+              <p
                 key="valid"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
                 className="text-sm text-emerald-400/90"
               >
                 {t.setupRoles.validRoles} ({N}).
-              </motion.p>
+              </p>
             )}
           </AnimatePresence>
         </>
